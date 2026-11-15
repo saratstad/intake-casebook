@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Intake Triage Casebook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: one narrow case-file column; each scenario is a file card that moves through answer, follow-up, review. */
+:root{
+  --bg:#f3f5f7; --paper:#ffffff; --ink:#17202b; --muted:#5b6673; --line:#d9dee4;
+  --accent:#1f5f7a; --accent-ink:#ffffff; --accent-soft:#e3eef3;
+  --low:#2f7d4f; --med:#a26a12; --high:#b23a3a; --warn-bg:#fbf3e4;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-case:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#11161c; --paper:#19212a; --ink:#e6ebf0; --muted:#9aa6b2; --line:#2c3743;
+  --accent:#6fb3cf; --accent-ink:#0d1a21; --accent-soft:#1d313c;
+  --low:#6cc28f; --med:#e0aa52; --high:#ec8080; --warn-bg:#2b2416; color-scheme:dark}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.55}
+.wrap{max-width:720px;margin:0 auto;padding:28px max(16px,env(safe-area-inset-right,0px)) 64px max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:20px}
+header{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px 16px}
+h1{font-family:var(--f-case);font-weight:600;font-size:1.7rem;margin:0;text-wrap:balance}
+h2{font-family:var(--f-case);font-weight:600;font-size:1.25rem;margin:0;text-wrap:balance}
+h3{font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0;font-weight:600}
+p{margin:0}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav button{background:none;border:1px solid transparent;color:var(--muted);padding:6px 10px;border-radius:6px;font:inherit;font-size:.9rem;cursor:pointer}
+nav button[aria-current="true"]{border-color:var(--line);background:var(--paper);color:var(--ink)}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:22px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.tag{font-family:var(--f-mono);font-size:.75rem;color:var(--accent);letter-spacing:.04em}
+.case{font-family:var(--f-case);font-size:1.06rem;line-height:1.6;border-left:3px solid var(--accent);padding-left:14px}
+.case em{color:var(--muted);font-style:italic}
+.qs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0;padding:0;list-style:none}
+.qs li{background:var(--accent-soft);border-radius:6px;padding:6px 8px;font-size:.82rem}
+@media (max-width:560px){.qs{grid-template-columns:repeat(2,minmax(0,1fr))}}
+label{font-weight:500;font-size:.9rem}
+textarea{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;resize:vertical;min-height:150px}
+textarea.short{min-height:70px}
+textarea:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.between{justify-content:space-between}
+.btn{font:inherit;font-weight:500;border-radius:8px;padding:9px 16px;cursor:pointer;border:1px solid var(--line);background:var(--paper);color:var(--ink)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn:disabled{opacity:.55;cursor:default}
+.muted{color:var(--muted);font-size:.88rem}
+.push{background:var(--accent-soft);border-radius:8px;padding:14px 16px;font-family:var(--f-case);font-size:1.02rem}
+.note{background:var(--warn-bg);border-radius:8px;padding:10px 14px;font-size:.88rem}
+.field{display:flex;flex-direction:column;gap:6px}
+.labelrow{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:inherit;font-size:.85rem;border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:999px;padding:5px 12px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.pill{display:inline-block;font-size:.75rem;font-weight:600;padding:2px 9px;border-radius:999px;border:1px solid currentColor}
+.r-low{color:var(--low)} .r-medium{color:var(--med)} .r-high,.r-decline{color:var(--high)}
+.list{display:flex;flex-direction:column;gap:10px}
+.item{display:flex;justify-content:space-between;gap:12px;align-items:center;border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:var(--paper);flex-wrap:wrap}
+.item > div{min-width:0}
+.progress{display:flex;gap:4px}
+.progress span{width:22px;height:5px;border-radius:3px;background:var(--line)}
+.progress span.done{background:var(--accent)}
+.progress span.cur{background:var(--ink)}
+.mic{font:inherit;font-size:.82rem;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:999px;padding:4px 12px;cursor:pointer}
+.mic::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.mic[aria-pressed="true"]{border-color:var(--high);color:var(--high)}
+.mic[aria-pressed="true"]::before{background:var(--high);animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.3}}
+.live{font-size:.85rem;color:var(--muted);font-style:italic;min-height:1.2em}
+.spin::after{content:"…";animation:dots 1.2s steps(3) infinite}
+@keyframes dots{0%{content:"."}50%{content:".."}100%{content:"..."}}
+@media (prefers-reduced-motion:reduce){.spin::after{animation:none;content:"…"}.mic[aria-pressed="true"]::before{animation:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Intake Triage Casebook</h1>
+    <nav id="nav" hidden></nav>
+  </header>
+  <main id="main"><div class="card"><p class="muted spin">Opening the casebook</p></div></main>
+</div>
+
+<script>
+// The survey's back end: the Google Apps Script web app link (ends in /exec).
+const API_URL = "https://script.google.com/macros/s/AKfycbwDWveUpBW19Z5By7eZEcm6Kn3fAj-x8iqncl0RhzJTlKuJu6Vmnrjex4EMqOtqeHZJPQ/exec";
+let SCENARIOS = {}, FIXED_PUSH = {};
+const RATINGS = ["Low","Medium","High","Decline"];
+const SECTIONS = [["noticed","What I noticed first"],["asked","What I asked"],["why","Conclusion and why"],["would_change","What would change it"]];
+const plain = s => String(s).replace(/<[^>]+>/g,"");
+const esc = s => String(s ?? "").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const $main = document.getElementById("main"), $nav = document.getElementById("nav");
+
+const S = { token:null, persistent:true, root:null, answers:{}, view:"intro", cur:null, step:"answer", busy:false, draft:{},
+  rec:null, micTarget:null, micState:"off", micTimer:null, micSupported:false };
+
+/* ---------- server calls ---------- */
+// Plain-text POST without cookies: Google treats every caller as anonymous,
+// so a browser signed in to Google accounts can't be switched to one.
+const SLOW = ["getFollowUp", "getCaseNote"];
+async function run(fn, ...args){
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), SLOW.includes(fn) ? 90000 : 30000);
+  try{
+    const res = await fetch(API_URL, { method:"POST", body: JSON.stringify({fn, args}),
+      headers:{"Content-Type":"text/plain;charset=utf-8"}, credentials:"omit", redirect:"follow", signal: ctrl.signal });
+    if(!res.ok) throw new Error("server " + res.status);
+    const out = await res.json();
+    if(!out.ok) throw new Error(out.error || "server error");
+    return out.result;
+  }catch(e){
+    throw new Error(e && e.name === "AbortError" ? "the server took too long" : (e instanceof TypeError || !e || !e.message) ? "connection problem" : e.message);
+  }finally{ clearTimeout(timer); }
+}
+
+/* ---------- per-browser token: lets this browser resume and edit its own answers ---------- */
+function store(k, v){ try{ if(v === undefined) return JSON.parse(localStorage.getItem(k) || "null"); localStorage.setItem(k, JSON.stringify(v)); }catch(e){ if(v===undefined) return null; S.persistent=false; } }
+function getToken(){
+  let t = store("intake-token");
+  if(typeof t !== "string" || !/^[a-f0-9]{32}$/.test(t)){
+    const b = new Uint8Array(16); crypto.getRandomValues(b);
+    t = Array.from(b, x => x.toString(16).padStart(2,"0")).join("");
+    store("intake-token", t);
+  }
+  return t;
+}
+
+/* ---------- boot ---------- */
+async function boot(){
+  S.token = getToken();
+  await setupMic();
+  try{
+    const cfg = await run("getConfig");
+    SCENARIOS = cfg.scenarios; FIXED_PUSH = cfg.fixedPush;
+  }catch(e){ return renderBlocked("The survey couldn't be reached just now. Check your connection and try again.", true); }
+  try{
+    const mine = await run("getMyAnswers", S.token);
+    if(mine){ S.root = {code:mine.code, order:mine.order}; S.answers = mine.answers || {}; }
+  }catch(e){ return renderBlocked("The survey couldn't load your answers. Check your connection and try again.", true); }
+  S.view = S.root ? "mine" : "intro";
+  render();
+}
+async function ensureRoot(){ if(!S.root) S.root = await run("startRespondent", S.token); }
+const ans = sid => S.answers[sid];
+const nextOpen = () => (S.root?.order || []).find(id => !ans(id) || ans(id).status !== "complete");
+
+/* ---------- dictation (the browser's built-in speech recognition) ---------- */
+async function setupMic(){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR) return;
+  // Don't offer the button where the microphone is already known to be blocked
+  // (for example inside a page frame that isn't allowed the microphone).
+  try{ if(document.featurePolicy && !document.featurePolicy.allowsFeature("microphone")) return; }catch(e){}
+  try{ const p = navigator.permissions && await navigator.permissions.query({name:"microphone"}); if(p && p.state === "denied") return; }catch(e){}
+  S.micSupported = true;
+  const rec = new SR();
+  rec.continuous = true; rec.interimResults = true; rec.lang = navigator.language || "en-GB";
+  rec.onstart = () => { if(S.micState === "starting"){ S.micState = "on"; clearTimeout(S.micTimer); paintMics(); } };
+  rec.onresult = e => {
+    const el = S.micTarget && document.getElementById(S.micTarget); if(!el) return;
+    let interim = "";
+    for(let i = e.resultIndex; i < e.results.length; i++){
+      const t = e.results[i][0].transcript;
+      if(e.results[i].isFinal){ el.value = (el.value && !/\s$/.test(el.value) ? el.value + " " : el.value) + t.trim(); el.dispatchEvent(new Event("input",{bubbles:true})); }
+      else interim += t;
+    }
+    const l = document.getElementById("live-" + S.micTarget); if(l) l.textContent = interim;
+  };
+  rec.onerror = e => {
+    resetMic();
+    if(["not-allowed","service-not-allowed","audio-capture"].includes(e.error)) disableMic();
+    else if(e.error !== "no-speech" && e.error !== "aborted") msg("Dictation stopped (" + e.error + "). Press Dictate to try again, or keep typing.");
+  };
+  rec.onend = () => resetMic();
+  S.rec = rec;
+}
+function resetMic(){
+  clearTimeout(S.micTimer);
+  const l = S.micTarget && document.getElementById("live-" + S.micTarget); if(l) l.textContent = "";
+  S.micState = "off"; S.micTarget = null; paintMics();
+}
+function disableMic(){
+  S.micSupported = false;
+  document.querySelectorAll(".mic, .live").forEach(b => b.remove());
+  msg("This browser isn't letting the page use the microphone, so the Dictate button is switched off. You can type, or use your computer's own dictation: on a Mac press Fn twice (or the microphone key); on Windows press Windows + H.");
+}
+function toggleMic(id){
+  if(!S.rec) return;
+  if(S.micState !== "off"){
+    // Any press while listening stops it; the last words still arrive before it ends.
+    S.micState = "stopping"; paintMics();
+    try{ S.rec.stop(); }catch(e){}
+    clearTimeout(S.micTimer); S.micTimer = setTimeout(resetMic, 3000);
+    return;
+  }
+  S.micTarget = id; S.micState = "starting"; paintMics();
+  try{ S.rec.start(); }catch(e){ resetMic(); return; }
+  S.micTimer = setTimeout(() => {
+    if(S.micState !== "starting") return;
+    try{ S.rec.abort(); }catch(e){}
+    resetMic();
+    msg("Dictation didn't start. Your browser may be blocking the microphone. You can keep typing, or use your computer's own dictation.");
+  }, 8000);
+}
+function stopMic(){ if(S.rec && S.micState !== "off"){ try{ S.rec.abort(); }catch(e){} resetMic(); } }
+function paintMics(){ document.querySelectorAll(".mic").forEach(b => {
+  const mine = b.dataset.mic === S.micTarget, on = mine && (S.micState === "on" || S.micState === "starting");
+  b.setAttribute("aria-pressed", on);
+  b.textContent = mine && S.micState === "starting" ? "Starting… (press to cancel)" : on ? "Stop dictating" : "Dictate";
+}); }
+function micBtn(id){ return S.micSupported ? `<button type="button" class="mic" data-mic="${id}" aria-pressed="false">Dictate</button>` : ""; }
+function fieldHtml(id, label, value, cls){
+  return `<div class="field"><div class="labelrow"><label for="${id}">${label}</label>${micBtn(id)}</div>
+    <textarea id="${id}" class="${cls || ""}" maxlength="4000"${id==="f-answer"?' placeholder="What do you notice first? What do you ask? What would you rate it? Why?"':""}>${esc(value)}</textarea>
+    ${S.micSupported ? `<div class="live" id="live-${id}" aria-live="polite"></div>` : ""}</div>`;
+}
+
+/* ---------- render ---------- */
+function renderBlocked(m, retry){ $nav.hidden = true; $main.innerHTML = `<div class="card"><h2>Can't open the survey</h2><p>${esc(m)}</p>${retry ? `<div class="row"><button class="btn primary" data-act="retry">Try again</button></div>` : ""}</div>`; }
+function msg(m){ const el = document.getElementById("err"); if(el) el.innerHTML = `<div class="note">${esc(m)}</div>`; }
+function renderNav(){
+  $nav.hidden = false;
+  $nav.innerHTML = [["intro","About"],["mine","Your answers"]].map(([v,l]) => `<button data-nav="${v}" aria-current="${S.view===v}">${l}</button>`).join("");
+}
+function render(){
+  stopMic();
+  if(S.view === "mine" && !S.root) S.view = "intro";
+  renderNav();
+  if(S.view === "intro") renderIntro();
+  else if(S.view === "mine") renderMine();
+  else renderScenario();
+}
+function renderIntro(){
+  $main.innerHTML = `<div class="card">
+    <h2>How would you triage these new clients?</h2>
+    <p>Seven short, entirely fictional scenarios built from public money-laundering typologies. For each one, say what you notice first, what you would ask, what you would rate it, and why. You'll then get one follow-up question on your reasoning, and see your answer laid out as a short case note that you can correct before it's saved.</p>
+    <p>Answer as many or as few as you like. One is useful. Each scenario is saved as you go, and the order is shuffled for each person.</p>
+    <div class="note">Please don't include real client, matter or people's names. The survey doesn't ask who you are and doesn't record your name, email or account. Your answers go only to the survey organiser; other respondents can't see them.</div>
+    <p class="muted">The follow-up question and case-note layout are drafted by Claude, an AI model. If it's unavailable, you'll get a set follow-up question and can fill in the case note yourself.</p>
+    <p class="muted">${S.micSupported ? "You can speak your answers: press Dictate next to any box. Your browser will ask for microphone permission the first time." : "To speak instead of typing, use your computer's own dictation while the answer box is selected: on a Mac press Fn twice (or the microphone key); on Windows press Windows + H."}</p>
+    ${S.persistent ? `<p class="muted">This browser remembers your answers so you can come back and edit them. Use the same browser to return.</p>` : `<p class="muted">This browser can't remember you between visits, so please finish what you start in one go.</p>`}
+    <div id="err"></div>
+    <div class="row"><button class="btn primary" data-act="start" ${S.busy?"disabled":""}>${S.root ? (nextOpen() ? "Continue" : "Review your answers") : "Start the first scenario"}</button></div>
+  </div>`;
+}
+function renderMine(){
+  const done = S.root.order.filter(id => ans(id)?.status === "complete").length;
+  const items = S.root.order.map((sid,i) => {
+    const a = ans(sid), r = a?.rating;
+    const st = !a ? "Not started" : a.status === "complete" ? "Saved" : "In progress";
+    return `<div class="item"><div><div class="tag">CASE ${i+1} OF 7 · SCENARIO ${sid}</div><div>${esc(plain(SCENARIOS[sid]).slice(0,110))}…</div></div>
+      <div class="row">${r ? `<span class="pill r-${r.toLowerCase()}">${r}</span>` : ""}<span class="muted">${st}</span>
+      <button class="btn" data-open="${sid}">${!a ? "Answer" : a.status === "complete" ? "Review or edit" : "Continue"}</button></div></div>`;
+  }).join("");
+  $main.innerHTML = `<div class="card"><div class="row between"><h2>Your answers</h2><span class="muted">${done} of 7 saved · code ${esc(S.root.code)}</span></div>
+    <p class="muted">You can stop at any time. Anything saved here has already reached the organiser.</p>
+    <div class="list">${items}</div></div>`;
+}
+function progressBar(){
+  return `<div class="progress" aria-hidden="true">${S.root.order.map(id => `<span class="${id===S.cur ? "cur" : ans(id)?.status==="complete" ? "done" : ""}"></span>`).join("")}</div>`;
+}
+function renderScenario(){
+  const sid = S.cur, a = ans(sid) || {}, pos = S.root.order.indexOf(sid) + 1;
+  let body;
+  if(S.step === "answer"){
+    body = `${fieldHtml("f-answer","Your answer", S.draft.answer ?? a.answer ?? "")}
+      <div class="row"><button class="btn primary" data-act="submit-answer" ${S.busy?"disabled":""}>${S.busy ? '<span class="spin">Preparing a follow-up</span>' : "Submit answer"}</button>
+      <button class="btn" data-act="skip" ${S.busy?"disabled":""}>Skip this scenario</button></div>`;
+  } else if(S.step === "push"){
+    body = `<details><summary class="muted">Your answer</summary><p style="white-space:pre-wrap;margin-top:8px">${esc(a.answer)}</p></details>
+      <div class="field"><h3>Follow-up</h3><div class="push">${esc(a.pushback_question)}</div></div>
+      ${fieldHtml("f-follow","Your reply", S.draft.followup ?? a.followup ?? "", "short")}
+      <div class="row"><button class="btn primary" data-act="submit-follow" ${S.busy?"disabled":""}>${S.busy ? '<span class="spin">Laying out your case note</span>' : "Submit reply"}</button>
+      <button class="btn" data-act="no-follow" ${S.busy?"disabled":""}>Skip the follow-up</button></div>`;
+  } else {
+    const manual = a.structured_source === "manual";
+    body = `${manual ? `<div class="note">The automatic layout wasn't available, so please sort your answer under the headings below. Your original answer is shown for reference.</div><p style="white-space:pre-wrap" class="muted">${esc(a.answer)}${a.followup ? "\n\nFollow-up reply: " + esc(a.followup) : ""}</p>` : `<p class="muted">Here's your answer as a case note. Edit anything that doesn't say what you meant, then save.</p>`}
+      ${SECTIONS.slice(0,2).map(([k,l]) => fieldHtml("f-"+k, l, a[k] || "", "short")).join("")}
+      <div class="field"><label>Rating</label><div class="chips" id="f-rating">${RATINGS.map(r => `<button type="button" class="chip" data-rate="${r}" aria-pressed="${a.rating===r}">${r}</button>`).join("")}</div></div>
+      ${SECTIONS.slice(2).map(([k,l]) => fieldHtml("f-"+k, l, a[k] || "", "short")).join("")}
+      <div class="row"><button class="btn primary" data-act="save-next" ${S.busy?"disabled":""}>Save and next scenario</button>
+      <button class="btn" data-act="save-stop" ${S.busy?"disabled":""}>Save and stop here</button></div>`;
+  }
+  $main.innerHTML = `<div class="card">
+    <div class="row between"><span class="tag">CASE ${pos} OF 7 · SCENARIO ${sid}</span>${progressBar()}</div>
+    <div class="case">${SCENARIOS[sid]}</div>
+    ${S.step === "answer" ? `<ul class="qs"><li>1. What do you notice first?</li><li>2. What do you ask?</li><li>3. What would you rate it?</li><li>4. Why?</li></ul>` : ""}
+    <div id="err"></div>
+    ${body}</div>`;
+  const ta = $main.querySelector("#f-answer, #f-follow");
+  if(ta) ta.addEventListener("input", e => { S.draft[e.target.id === "f-answer" ? "answer" : "followup"] = e.target.value; store("draft-"+sid, S.draft); });
+}
+
+/* ---------- actions ---------- */
+function openScenario(sid){
+  S.cur = sid; S.draft = store("draft-"+sid) || {};
+  const a = ans(sid);
+  S.step = !a || !a.pushback_question ? "answer" : (a.status === "followed_up" || a.status === "complete") ? "review" : "push";
+  S.view = "scenario"; render(); window.scrollTo(0,0);
+}
+function setBusy(b){ S.busy = b; if(S.view === "scenario") renderScenario(); else if(S.view === "intro") renderIntro(); }
+function clearDraft(){ S.draft = {}; store("draft-"+S.cur, {}); }
+
+document.addEventListener("click", async ev => {
+  const t = ev.target.closest("button"); if(!t) return;
+  if(t.dataset.mic) return toggleMic(t.dataset.mic);
+  if(t.dataset.rate){ document.querySelectorAll("#f-rating .chip").forEach(c => c.setAttribute("aria-pressed", c === t && c.getAttribute("aria-pressed") !== "true")); return; }
+  if(S.busy) return;
+  if(t.dataset.nav){ S.view = t.dataset.nav; return render(); }
+  if(t.dataset.open) return openScenario(Number(t.dataset.open));
+  const act = t.dataset.act; if(!act) return;
+  if(act === "retry"){ $main.innerHTML = `<div class="card"><p class="muted spin">Opening the casebook</p></div>`; return boot(); }
+  try{
+    if(act === "start"){
+      setBusy(true); await ensureRoot(); S.busy = false;
+      const n = nextOpen(); if(n) return openScenario(n); S.view = "mine"; return render();
+    }
+    if(act === "skip"){
+      const order = S.root.order, i = order.indexOf(S.cur);
+      const n = order.slice(i+1).concat(order.slice(0,i)).find(id => !ans(id) || ans(id).status !== "complete");
+      if(n && n !== S.cur) return openScenario(n); S.view = "mine"; return render();
+    }
+    if(act === "submit-answer"){
+      const text = document.getElementById("f-answer").value.trim();
+      if(text.length < 15) return msg("Please write a little more: even a couple of lines on your rating and why is useful.");
+      stopMic(); setBusy(true);
+      S.answers[S.cur] = await run("saveAnswer", S.token, S.cur, {answer:text, status:"answered"});
+      S.answers[S.cur] = await run("getFollowUp", S.token, S.cur);
+      clearDraft(); S.busy = false; S.step = "push"; return renderScenario();
+    }
+    if(act === "submit-follow" || act === "no-follow"){
+      const reply = act === "no-follow" ? "" : document.getElementById("f-follow").value.trim();
+      stopMic(); setBusy(true);
+      S.answers[S.cur] = await run("saveAnswer", S.token, S.cur, {followup:reply, status:"followed_up"});
+      S.answers[S.cur] = await run("getCaseNote", S.token, S.cur);
+      clearDraft(); S.busy = false; S.step = "review"; return renderScenario();
+    }
+    if(act === "save-next" || act === "save-stop"){
+      const patch = {status:"complete"};
+      SECTIONS.forEach(([k]) => patch[k] = document.getElementById("f-"+k).value.trim());
+      const pr = document.querySelector('#f-rating .chip[aria-pressed="true"]'); patch.rating = pr ? pr.dataset.rate : "";
+      const prev = ans(S.cur); S.answers[S.cur] = {...prev, ...patch, status: prev.status}; // keep edits on screen if the save fails
+      stopMic(); setBusy(true);
+      S.answers[S.cur] = await run("saveAnswer", S.token, S.cur, patch);
+      S.busy = false;
+      if(act === "save-next"){ const n = nextOpen(); if(n) return openScenario(n); }
+      S.view = "mine"; return render();
+    }
+  }catch(e){
+    S.busy = false;
+    if(S.view === "scenario") renderScenario(); else render();
+    msg("That didn't save (" + ((e && e.message) || "connection problem") + "). Your text is kept on this page; please try again.");
+  }
+});
+boot();
+</script>
+</body>
+</html>
