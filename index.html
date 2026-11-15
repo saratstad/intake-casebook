@@ -91,7 +91,16 @@ textarea:focus,button:focus-visible{outline:2px solid var(--accent);outline-offs
 <script>
 // The survey's back end: the Google Apps Script web app link (ends in /exec).
 const API_URL = "https://script.google.com/macros/s/AKfycbwDWveUpBW19Z5By7eZEcm6Kn3fAj-x8iqncl0RhzJTlKuJu6Vmnrjex4EMqOtqeHZJPQ/exec";
-let SCENARIOS = {}, FIXED_PUSH = {};
+// Scenario text, kept identical to SCENARIOS in apps-script/Code.gs.
+const SCENARIOS = {
+  1: 'A partner sends you a new instruction. The client is a UK company incorporated six weeks ago, and it wants to buy a residential flat in central London for £2.4 million with no mortgage. Its sole shareholder is a company in the British Virgin Islands. The director says the purchase money will be a "gift from the family", sent from an account in a third country. The partner wants to send the engagement letter by Friday because the seller has set a tight exchange date.',
+  2: 'A small UK construction company has been a client for eight years, mostly for routine contract work. It now asks you to act in a debt dispute with a supplier. Within two weeks the parties tell you they have "settled". The supplier wants to pay £380,000 into your firm\'s client account, and your client asks you to pass most of it straight on to a company in another country that you have never heard of, "to save time". <em>(The overseas company is not the supplier, and nothing you\'ve been told links it to either party. Your client keeps part of the money.)</em>',
+  3: 'A private client team asks you to approve a new client. He is a 34-year-old entrepreneur living in the UK who says he made his fortune of about £15 million in early cryptocurrency investments, mostly between 2013 and 2017. He wants to set up a family investment company and use it to buy a minority stake in a UK fintech start-up. The money will come in from his account at a regulated UK bank, which received it from a crypto exchange over the past year.',
+  4: 'An established logistics company, incorporated in an Eastern European country with a poor corruption-perception score, wants advice on setting up a UK joint venture to bid for port-handling contracts. Its shareholders are named in its own country\'s public register. One of them, with 30%, is the brother of a serving deputy minister of transport in that country. The company has audited accounts going back ten years and a UK bank account already open.',
+  5: 'A trading company in the UAE wants advice on refinancing a loan secured over a UK warehouse it owns. The ownership records show that a businessman held 60% until spring 2022. Three weeks before he was placed on the UK sanctions list, he moved his stake down to 45%. The other 15% went to his adult daughter, and the rest of the company is held by a long-time business associate of his.',
+  6: 'A UK-registered charity, set up 18 months ago, asks you to act on buying a building in the Midlands to use as a community centre, for £900,000. Its three trustees are related to each other. Its published accounts show income mostly from cash donations collected at events. Its website says it also runs "humanitarian projects" in a region near an active conflict zone, carried out through a local partner organisation overseas.',
+  7: 'A Luxembourg fund manager, regulated by its local regulator, instructs you on buying a UK software company for £60 million on behalf of one of its funds. When you ask about the fund\'s investors, the manager says they are confidential. It confirms only that it has done its own checks on them, and that no single investor holds more than 25%. You find out separately that one investor holds 35% through a nominee company, which the manager hadn\'t mentioned.'
+};
 const RATINGS = ["Low","Medium","High","Decline"];
 const SECTIONS = [["noticed","What I noticed first"],["asked","What I asked"],["why","Conclusion and why"],["would_change","What would change it"]];
 const plain = s => String(s).replace(/<[^>]+>/g,"");
@@ -99,25 +108,39 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;","
 const $main = document.getElementById("main"), $nav = document.getElementById("nav");
 
 const S = { token:null, persistent:true, root:null, answers:{}, view:"intro", cur:null, step:"answer", busy:false, draft:{},
-  rec:null, micTarget:null, micState:"off", micTimer:null, micSupported:false };
+  rec:null, micTarget:null, micState:"off", micTimer:null, micSupported:false, micBase:"", micRestarts:0,
+  offline:false, slowTimer:null };
 
 /* ---------- server calls ---------- */
 // Plain-text POST without cookies: Google treats every caller as anonymous,
 // so a browser signed in to Google accounts can't be switched to one.
-const SLOW = ["getFollowUp", "getCaseNote"];
-async function run(fn, ...args){
+// Dropped or timed-out requests are retried; the server makes every call safe to repeat.
+const SLOW = ["getFollowUp", "getCaseNote", "submitAnswer", "submitFollowUp"];
+async function runOnce(fn, args){
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), SLOW.includes(fn) ? 90000 : 30000);
   try{
-    const res = await fetch(API_URL, { method:"POST", body: JSON.stringify({fn, args}),
-      headers:{"Content-Type":"text/plain;charset=utf-8"}, credentials:"omit", redirect:"follow", signal: ctrl.signal });
-    if(!res.ok) throw new Error("server " + res.status);
-    const out = await res.json();
+    let res;
+    try{
+      res = await fetch(API_URL, { method:"POST", body: JSON.stringify({fn, args}),
+        headers:{"Content-Type":"text/plain;charset=utf-8"}, credentials:"omit", redirect:"follow", signal: ctrl.signal });
+    }catch(e){ const err = new Error(e && e.name === "AbortError" ? "the server took too long" : "connection problem"); err.retry = true; throw err; }
+    if(!res.ok){ const err = new Error("server " + res.status); err.retry = res.status >= 500 || res.status === 429; throw err; }
+    let out;
+    try{ out = await res.json(); }catch(e){ const err = new Error("connection problem"); err.retry = true; throw err; }
     if(!out.ok) throw new Error(out.error || "server error");
     return out.result;
-  }catch(e){
-    throw new Error(e && e.name === "AbortError" ? "the server took too long" : (e instanceof TypeError || !e || !e.message) ? "connection problem" : e.message);
   }finally{ clearTimeout(timer); }
+}
+async function run(fn, ...args){
+  let last;
+  for(let attempt = 0; attempt < 3; attempt++){
+    if(attempt) await new Promise(r => setTimeout(r, 2000 * attempt));
+    try{ const r = await runOnce(fn, args); S.offline = false; return r; }
+    catch(e){ last = e; if(!e.retry) break; }
+  }
+  if(last && last.retry) S.offline = true;
+  throw last;
 }
 
 /* ---------- per-browser token: lets this browser resume and edit its own answers ---------- */
@@ -133,59 +156,69 @@ function getToken(){
 }
 
 /* ---------- boot ---------- */
+function saveCache(){ if(S.root) store("intake-cache", {token:S.token, root:S.root, answers:S.answers}); }
 async function boot(){
   S.token = getToken();
   await setupMic();
-  try{
-    const cfg = await run("getConfig");
-    SCENARIOS = cfg.scenarios; FIXED_PUSH = cfg.fixedPush;
-  }catch(e){ return renderBlocked("The survey couldn't be reached just now. Check your connection and try again.", true); }
+  const cached = store("intake-cache");
+  if(cached && cached.token === S.token && cached.root && Array.isArray(cached.root.order)){ S.root = cached.root; S.answers = cached.answers || {}; }
+  S.view = S.root ? "mine" : "intro";
+  render();
+  refresh();
+}
+async function refresh(){
   try{
     const mine = await run("getMyAnswers", S.token);
     if(mine){ S.root = {code:mine.code, order:mine.order}; S.answers = mine.answers || {}; }
-  }catch(e){ return renderBlocked("The survey couldn't load your answers. Check your connection and try again.", true); }
-  S.view = S.root ? "mine" : "intro";
-  render();
+    else { S.root = null; S.answers = {}; }
+    saveCache();
+  }catch(e){ /* keep what this browser saved; the offline note explains */ }
+  if(S.view !== "scenario" && !S.busy) render();
 }
 async function ensureRoot(){ if(!S.root) S.root = await run("startRespondent", S.token); }
 const ans = sid => S.answers[sid];
 const nextOpen = () => (S.root?.order || []).find(id => !ans(id) || ans(id).status !== "complete");
 
 /* ---------- dictation (the browser's built-in speech recognition) ---------- */
+// Words go straight into the text box as they are recognised and are never taken out again,
+// so nothing is lost if the browser stops before marking the last words as final.
+// Chrome on Android repeats words in continuous mode, so there it listens one phrase at a time
+// and quietly restarts until the respondent presses Stop.
+const ONE_PHRASE = /Android/i.test(navigator.userAgent);
 async function setupMic(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!SR) return;
-  // Don't offer the button where the microphone is already known to be blocked
-  // (for example inside a page frame that isn't allowed the microphone).
   try{ if(document.featurePolicy && !document.featurePolicy.allowsFeature("microphone")) return; }catch(e){}
   try{ const p = navigator.permissions && await navigator.permissions.query({name:"microphone"}); if(p && p.state === "denied") return; }catch(e){}
   S.micSupported = true;
   const rec = new SR();
-  rec.continuous = true; rec.interimResults = true; rec.lang = navigator.language || "en-GB";
+  rec.continuous = !ONE_PHRASE; rec.interimResults = true; rec.lang = navigator.language || "en-GB";
   rec.onstart = () => { if(S.micState === "starting"){ S.micState = "on"; clearTimeout(S.micTimer); paintMics(); } };
   rec.onresult = e => {
     const el = S.micTarget && document.getElementById(S.micTarget); if(!el) return;
-    let interim = "";
-    for(let i = e.resultIndex; i < e.results.length; i++){
-      const t = e.results[i][0].transcript;
-      if(e.results[i].isFinal){ el.value = (el.value && !/\s$/.test(el.value) ? el.value + " " : el.value) + t.trim(); el.dispatchEvent(new Event("input",{bubbles:true})); }
-      else interim += t;
-    }
-    const l = document.getElementById("live-" + S.micTarget); if(l) l.textContent = interim;
+    let spoken = "";
+    for(let i = 0; i < e.results.length; i++) spoken += e.results[i][0].transcript;
+    spoken = spoken.replace(/\s+/g, " ").trim();
+    const base = S.micBase, sep = base && spoken && !/\s$/.test(base) ? " " : "";
+    el.value = base + sep + spoken;
+    el.dispatchEvent(new Event("input", {bubbles:true}));
   };
   rec.onerror = e => {
-    resetMic();
-    if(["not-allowed","service-not-allowed","audio-capture"].includes(e.error)) disableMic();
-    else if(e.error !== "no-speech" && e.error !== "aborted") msg("Dictation stopped (" + e.error + "). Press Dictate to try again, or keep typing.");
+    if(["not-allowed","service-not-allowed","audio-capture"].includes(e.error)){ endMic(); disableMic(); }
+    else if(e.error === "no-speech" || e.error === "aborted"){ /* onend decides what happens next */ }
+    else { endMic(); msg("Dictation stopped (" + e.error + "). Press Dictate to try again, or keep typing."); }
   };
-  rec.onend = () => resetMic();
+  rec.onend = () => {
+    // The browser ended on its own (a pause, or one-phrase mode): carry on listening.
+    if(S.micState === "on" && S.micRestarts < 50){
+      const el = document.getElementById(S.micTarget);
+      if(el){ S.micBase = el.value; S.micRestarts++; try{ rec.start(); return; }catch(e){} }
+    }
+    endMic();
+  };
   S.rec = rec;
 }
-function resetMic(){
-  clearTimeout(S.micTimer);
-  const l = S.micTarget && document.getElementById("live-" + S.micTarget); if(l) l.textContent = "";
-  S.micState = "off"; S.micTarget = null; paintMics();
-}
+function endMic(){ clearTimeout(S.micTimer); S.micState = "off"; S.micTarget = null; S.micRestarts = 0; paintMics(); }
 function disableMic(){
   S.micSupported = false;
   document.querySelectorAll(".mic, .live").forEach(b => b.remove());
@@ -194,22 +227,25 @@ function disableMic(){
 function toggleMic(id){
   if(!S.rec) return;
   if(S.micState !== "off"){
-    // Any press while listening stops it; the last words still arrive before it ends.
+    // Stop: the text already in the box stays; any last words still arrive before it ends.
     S.micState = "stopping"; paintMics();
     try{ S.rec.stop(); }catch(e){}
-    clearTimeout(S.micTimer); S.micTimer = setTimeout(resetMic, 3000);
+    clearTimeout(S.micTimer); S.micTimer = setTimeout(endMic, 3000);
     return;
   }
-  S.micTarget = id; S.micState = "starting"; paintMics();
-  try{ S.rec.start(); }catch(e){ resetMic(); return; }
+  const el = document.getElementById(id); if(!el) return;
+  S.micTarget = id; S.micBase = el.value; S.micRestarts = 0; S.micState = "starting"; paintMics();
+  try{ S.rec.start(); }catch(e){ endMic(); return; }
   S.micTimer = setTimeout(() => {
     if(S.micState !== "starting") return;
-    try{ S.rec.abort(); }catch(e){}
-    resetMic();
+    S.micState = "off"; try{ S.rec.abort(); }catch(e){}
+    endMic();
     msg("Dictation didn't start. Your browser may be blocking the microphone. You can keep typing, or use your computer's own dictation.");
   }, 8000);
 }
-function stopMic(){ if(S.rec && S.micState !== "off"){ try{ S.rec.abort(); }catch(e){} resetMic(); } }
+function stopMic(){ if(S.rec && S.micState !== "off"){ S.micState = "off"; try{ S.rec.abort(); }catch(e){} endMic(); } }
+// Typing into the box while dictating stops dictation, so it can't overwrite what was typed.
+document.addEventListener("input", e => { if(e.isTrusted && S.micState !== "off" && e.target.id === S.micTarget) stopMic(); });
 function paintMics(){ document.querySelectorAll(".mic").forEach(b => {
   const mine = b.dataset.mic === S.micTarget, on = mine && (S.micState === "on" || S.micState === "starting");
   b.setAttribute("aria-pressed", on);
@@ -218,8 +254,7 @@ function paintMics(){ document.querySelectorAll(".mic").forEach(b => {
 function micBtn(id){ return S.micSupported ? `<button type="button" class="mic" data-mic="${id}" aria-pressed="false">Dictate</button>` : ""; }
 function fieldHtml(id, label, value, cls){
   return `<div class="field"><div class="labelrow"><label for="${id}">${label}</label>${micBtn(id)}</div>
-    <textarea id="${id}" class="${cls || ""}" maxlength="4000"${id==="f-answer"?' placeholder="What do you notice first? What do you ask? What would you rate it? Why?"':""}>${esc(value)}</textarea>
-    ${S.micSupported ? `<div class="live" id="live-${id}" aria-live="polite"></div>` : ""}</div>`;
+    <textarea id="${id}" class="${cls || ""}" maxlength="4000"${id==="f-answer"?' placeholder="What do you notice first? What do you ask? What would you rate it? Why?"':""}>${esc(value)}</textarea></div>`;
 }
 
 /* ---------- render ---------- */
@@ -229,7 +264,9 @@ function renderNav(){
   $nav.hidden = false;
   $nav.innerHTML = [["intro","About"],["mine","Your answers"]].map(([v,l]) => `<button data-nav="${v}" aria-current="${S.view===v}">${l}</button>`).join("");
 }
+function offlineNote(){ return S.offline ? `<div class="note">The connection to the survey is slow or offline just now. You're seeing what this browser saved; new answers will save once the connection is back.</div>` : ""; }
 function render(){
+  saveCache();
   stopMic();
   if(S.view === "mine" && !S.root) S.view = "intro";
   renderNav();
@@ -246,6 +283,7 @@ function renderIntro(){
     <p class="muted">The follow-up question and case-note layout are drafted by Claude, an AI model. If it's unavailable, you'll get a set follow-up question and can fill in the case note yourself.</p>
     <p class="muted">${S.micSupported ? "You can speak your answers: press Dictate next to any box. Your browser will ask for microphone permission the first time." : "To speak instead of typing, use your computer's own dictation while the answer box is selected: on a Mac press Fn twice (or the microphone key); on Windows press Windows + H."}</p>
     ${S.persistent ? `<p class="muted">This browser remembers your answers so you can come back and edit them. Use the same browser to return.</p>` : `<p class="muted">This browser can't remember you between visits, so please finish what you start in one go.</p>`}
+    ${offlineNote()}
     <div id="err"></div>
     <div class="row"><button class="btn primary" data-act="start" ${S.busy?"disabled":""}>${S.root ? (nextOpen() ? "Continue" : "Review your answers") : "Start the first scenario"}</button></div>
   </div>`;
@@ -261,12 +299,14 @@ function renderMine(){
   }).join("");
   $main.innerHTML = `<div class="card"><div class="row between"><h2>Your answers</h2><span class="muted">${done} of 7 saved · code ${esc(S.root.code)}</span></div>
     <p class="muted">You can stop at any time. Anything saved here has already reached the organiser.</p>
+    ${offlineNote()}
     <div class="list">${items}</div></div>`;
 }
 function progressBar(){
   return `<div class="progress" aria-hidden="true">${S.root.order.map(id => `<span class="${id===S.cur ? "cur" : ans(id)?.status==="complete" ? "done" : ""}"></span>`).join("")}</div>`;
 }
 function renderScenario(){
+  saveCache();
   const sid = S.cur, a = ans(sid) || {}, pos = S.root.order.indexOf(sid) + 1;
   let body;
   if(S.step === "answer"){
@@ -305,7 +345,20 @@ function openScenario(sid){
   S.step = !a || !a.pushback_question ? "answer" : (a.status === "followed_up" || a.status === "complete") ? "review" : "push";
   S.view = "scenario"; render(); window.scrollTo(0,0);
 }
-function setBusy(b){ S.busy = b; if(S.view === "scenario") renderScenario(); else if(S.view === "intro") renderIntro(); }
+function setBusy(b){
+  clearTimeout(S.slowTimer); S.busy = b;
+  if(S.view === "scenario") renderScenario(); else if(S.view === "intro") renderIntro();
+  if(b) S.slowTimer = setTimeout(() => { if(S.busy) msg("Still working. On a slow connection this can take up to a minute; please keep this page open."); }, 12000);
+}
+// One round trip per step. Falls back to two calls if the server hasn't been redeployed yet.
+async function submitStep(kind, text){
+  try{ return await run(kind, S.token, S.cur, text); }
+  catch(e){
+    if(!e || e.message !== "unknown_function") throw e;
+    if(kind === "submitAnswer"){ await run("saveAnswer", S.token, S.cur, {answer:text, status:"answered"}); return run("getFollowUp", S.token, S.cur); }
+    await run("saveAnswer", S.token, S.cur, {followup:text, status:"followed_up"}); return run("getCaseNote", S.token, S.cur);
+  }
+}
 function clearDraft(){ S.draft = {}; store("draft-"+S.cur, {}); }
 
 document.addEventListener("click", async ev => {
@@ -331,15 +384,13 @@ document.addEventListener("click", async ev => {
       const text = document.getElementById("f-answer").value.trim();
       if(text.length < 15) return msg("Please write a little more: even a couple of lines on your rating and why is useful.");
       stopMic(); setBusy(true);
-      S.answers[S.cur] = await run("saveAnswer", S.token, S.cur, {answer:text, status:"answered"});
-      S.answers[S.cur] = await run("getFollowUp", S.token, S.cur);
+      S.answers[S.cur] = await submitStep("submitAnswer", text);
       clearDraft(); S.busy = false; S.step = "push"; return renderScenario();
     }
     if(act === "submit-follow" || act === "no-follow"){
       const reply = act === "no-follow" ? "" : document.getElementById("f-follow").value.trim();
       stopMic(); setBusy(true);
-      S.answers[S.cur] = await run("saveAnswer", S.token, S.cur, {followup:reply, status:"followed_up"});
-      S.answers[S.cur] = await run("getCaseNote", S.token, S.cur);
+      S.answers[S.cur] = await submitStep("submitFollowUp", reply);
       clearDraft(); S.busy = false; S.step = "review"; return renderScenario();
     }
     if(act === "save-next" || act === "save-stop"){
@@ -354,9 +405,9 @@ document.addEventListener("click", async ev => {
       S.view = "mine"; return render();
     }
   }catch(e){
-    S.busy = false;
+    clearTimeout(S.slowTimer); S.busy = false;
     if(S.view === "scenario") renderScenario(); else render();
-    msg("That didn't save (" + ((e && e.message) || "connection problem") + "). Your text is kept on this page; please try again.");
+    msg(e && e.retry ? "The connection dropped before this could save. Your text is kept on this page; press the button again when you have signal." : "That didn't save (" + ((e && e.message) || "connection problem") + "). Your text is kept on this page; please try again.");
   }
 });
 boot();
