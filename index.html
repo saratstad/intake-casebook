@@ -45,7 +45,10 @@ nav button[aria-current="true"]{border-color:var(--line);background:var(--paper)
 label{font-weight:500;font-size:.9rem}
 textarea{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;resize:vertical;min-height:150px}
 textarea.short{min-height:70px}
-textarea:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+textarea:focus,input:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.codein{font:inherit;font-family:var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 12px;width:11em;max-width:100%}
+.resume{border-top:1px solid var(--line);padding-top:16px;display:flex;flex-direction:column;gap:10px}
+.resume summary{cursor:pointer;font-weight:500;font-size:.9rem}
 .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 .between{justify-content:space-between}
 .btn{font:inherit;font-weight:500;border-radius:8px;padding:9px 16px;cursor:pointer;border:1px solid var(--line);background:var(--paper);color:var(--ink)}
@@ -145,15 +148,17 @@ async function run(fn, ...args){
 
 /* ---------- per-browser token: lets this browser resume and edit its own answers ---------- */
 function store(k, v){ try{ if(v === undefined) return JSON.parse(localStorage.getItem(k) || "null"); localStorage.setItem(k, JSON.stringify(v)); }catch(e){ if(v===undefined) return null; S.persistent=false; } }
+function newToken(){
+  const b = new Uint8Array(16); crypto.getRandomValues(b);
+  return Array.from(b, x => x.toString(16).padStart(2,"0")).join("");
+}
 function getToken(){
   let t = store("intake-token");
-  if(typeof t !== "string" || !/^[a-f0-9]{32}$/.test(t)){
-    const b = new Uint8Array(16); crypto.getRandomValues(b);
-    t = Array.from(b, x => x.toString(16).padStart(2,"0")).join("");
-    store("intake-token", t);
-  }
+  if(typeof t !== "string" || !/^[a-f0-9]{32}$/.test(t)){ t = newToken(); store("intake-token", t); }
   return t;
 }
+// Accepts "R-842993", "r842993" or "842993"; returns "R-842993", or null if it isn't a code.
+function normCode(c){ const m = /^R?[\s-]*([0-9A-F]{6})$/.exec(String(c || "").trim().toUpperCase()); return m ? "R-" + m[1] : null; }
 
 /* ---------- boot ---------- */
 function saveCache(){ if(S.root) store("intake-cache", {token:S.token, root:S.root, answers:S.answers}); }
@@ -282,11 +287,21 @@ function renderIntro(){
     <div class="note">Please don't include real client, matter or people's names. The survey doesn't ask who you are and doesn't record your name, email or account. Your answers go only to the survey organiser; other respondents can't see them.</div>
     <p class="muted">The follow-up question and case-note layout are drafted by Claude, an AI model. If it's unavailable, you'll get a set follow-up question and can fill in the case note yourself.</p>
     <p class="muted">${S.micSupported ? "You can speak your answers: press Dictate next to any box. Your browser will ask for microphone permission the first time." : "To speak instead of typing, use your computer's own dictation while the answer box is selected: on a Mac press Fn twice (or the microphone key); on Windows press Windows + H."}</p>
-    ${S.persistent ? `<p class="muted">This browser remembers your answers so you can come back and edit them. Use the same browser to return.</p>` : `<p class="muted">This browser can't remember you between visits, so please finish what you start in one go.</p>`}
+    ${S.persistent ? `<p class="muted">This browser remembers your answers so you can come back and edit them. You'll also get a code (like R-842993): enter it below to carry on in another browser or device, or after clearing your browser.</p>` : `<p class="muted">This browser can't remember you between visits. Note the code you'll see on "Your answers" (like R-842993): enter it below next time to carry on.</p>`}
     ${offlineNote()}
     <div id="err"></div>
     <div class="row"><button class="btn primary" data-act="start" ${S.busy?"disabled":""}>${S.root ? (nextOpen() ? "Continue" : "Review your answers") : "Start the first scenario"}</button></div>
+    ${resumeHtml()}
   </div>`;
+}
+function resumeHtml(){
+  const inner = `<label for="f-code">Your code</label>
+    <div class="row"><input id="f-code" class="codein" value="${esc(S.codeTry || "")}" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="R-000000" maxlength="12">
+    <button class="btn" data-act="resume" ${S.busy?"disabled":""}>Continue with this code</button></div>
+    ${S.root ? `<p class="muted">This browser will switch to that code. Your current answers stay saved under code ${esc(S.root.code)}.</p>` : ""}`;
+  return S.root
+    ? `<details class="resume"><summary>Use a different code</summary>${inner}</details>`
+    : `<div class="resume"><h3>Already started somewhere else?</h3><p class="muted">Enter the code shown on your other device or browser, next to "Your answers", to carry on where you left off.</p>${inner}</div>`;
 }
 function renderMine(){
   const done = S.root.order.filter(id => ans(id)?.status === "complete").length;
@@ -299,6 +314,7 @@ function renderMine(){
   }).join("");
   $main.innerHTML = `<div class="card"><div class="row between"><h2>Your answers</h2><span class="muted">${done} of 7 saved · code ${esc(S.root.code)}</span></div>
     <p class="muted">You can stop at any time. Anything saved here has already reached the organiser.</p>
+    <p class="muted">To carry on in another browser or device, or after clearing your browser, open the survey there and enter code <strong class="tag">${esc(S.root.code)}</strong> on the About page.</p>
     ${offlineNote()}
     <div class="list">${items}</div></div>`;
 }
@@ -375,6 +391,20 @@ document.addEventListener("click", async ev => {
       setBusy(true); await ensureRoot(); S.busy = false;
       const n = nextOpen(); if(n) return openScenario(n); S.view = "mine"; return render();
     }
+    if(act === "resume"){
+      S.codeTry = document.getElementById("f-code").value;
+      const code = normCode(S.codeTry);
+      if(!code) return msg("That doesn't look like a code. It's R- followed by six letters or numbers, for example R-842993.");
+      if(S.root && S.root.code === code) return msg("This browser is already using code " + code + ".");
+      const token = newToken();
+      setBusy(true);
+      const mine = await run("resumeByCode", token, code);
+      // From here on this browser is that respondent; drafts from the previous code are dropped.
+      (S.root?.order || []).forEach(id => store("draft-"+id, {}));
+      S.token = token; store("intake-token", token);
+      S.root = {code:mine.code, order:mine.order}; S.answers = mine.answers || {};
+      S.codeTry = ""; S.busy = false; S.view = "mine"; return render();
+    }
     if(act === "skip"){
       const order = S.root.order, i = order.indexOf(S.cur);
       const n = order.slice(i+1).concat(order.slice(0,i)).find(id => !ans(id) || ans(id).status !== "complete");
@@ -407,9 +437,13 @@ document.addEventListener("click", async ev => {
   }catch(e){
     clearTimeout(S.slowTimer); S.busy = false;
     if(S.view === "scenario") renderScenario(); else render();
+    const why = e && e.message;
+    if(act === "resume" && why === "code_not_found") return msg("We couldn't find that code. Check it against the one shown next to \"Your answers\" on your other device.");
+    if(act === "resume" && why === "unknown_function") return msg("Continuing with a code isn't switched on yet. Please try again later.");
     msg(e && e.retry ? "The connection dropped before this could save. Your text is kept on this page; press the button again when you have signal." : "That didn't save (" + ((e && e.message) || "connection problem") + "). Your text is kept on this page; please try again.");
   }
 });
+document.addEventListener("keydown", e => { if(e.key === "Enter" && e.target.id === "f-code"){ e.preventDefault(); document.querySelector('[data-act="resume"]')?.click(); } });
 boot();
 </script>
 </body>
